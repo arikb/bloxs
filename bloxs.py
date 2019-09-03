@@ -18,8 +18,7 @@ class Bloxs():
         self.session = HTMLSession()
         self.perform_login(self.USER, self.PASS)
 
-    @classmethod
-    def debug_on():
+    def debug_on(self):
         """do debug logging"""
         from http.client import HTTPConnection
 
@@ -66,7 +65,7 @@ class Bloxs():
             if result['Name'] == period:
                 return result['ID']
 
-    def find_payment_term_zero_id(self):
+    def find_payment_term_id(self, days):
         """Query bloxs for the payment terms, return the 0 days"""
         response = self.session.post(
             urljoin(
@@ -76,7 +75,7 @@ class Bloxs():
         response.raise_for_status()
         results = response.json()
         for result in results:
-            if result['Days'] == 0:
+            if result['Days'] == days:
                 return result['ID']
 
     def find_owner_id(self, owner):
@@ -92,20 +91,98 @@ class Bloxs():
             if result['Name'] == owner:
                 return result['ID']
 
-    def find_owner_accounts_id(self, owner_id):
+    def find_party_id(self, party):
+        """Query bloxs for a party ID"""
+        response = self.session.post(
+            urljoin(
+                self.API_BASE,
+                'data/reference/PartyReferenceItem'),
+            data={"searchTerm": party, "maxItems": "10"})
+        response.raise_for_status()
+        results = response.json()
+        for result in results:
+            if result['Name'] == party:
+                return result['ID']
+
+    def find_payment_method_id(self, payment_method):
+        """Query bloxs the ID of the payment method"""
+        response = self.session.post(
+            urljoin(
+                self.API_BASE,
+                'data/reference/PaymentMethodPurchaseInvoiceReferenceItem'),
+            data={"maxItems": "999"})
+        response.raise_for_status()
+        results = response.json()
+        for result in results:
+            if result['Name'] == payment_method:
+                return result['ID']
+
+    def find_ledger_id(self, ledger_code):
+        """Query bloxs the ID of the payment method"""
+        response = self.session.post(
+            urljoin(
+                self.API_BASE,
+                'data/reference/LedgerJournalReferenceItem'),
+            data={"searchTerm": ledger_code, "maxItems": "7"})
+        response.raise_for_status()
+        results = response.json()
+        for result in results:
+            if result['Name'].startswith(ledger_code):
+                return result['ID']
+
+    def find_property_id(self, owner_id, property_name):
+        """Query bloxs the ID of the payment method"""
+        response = self.session.post(
+            urljoin(
+                self.API_BASE,
+                'data/reference/RentableReferenceItem'),
+            json={
+                "searchTerm": property_name,
+                "maxItems": "7",
+                "filters": [
+                    {
+                        "column": "OwnerID",
+                        "operator": "neq",
+                        "value": owner_id
+                    }
+                ]
+                })
+        response.raise_for_status()
+        results = response.json()
+        for result in results:
+            if result['Name'].startswith(property_name):
+                return result['ID']
+
+    def find_tax_rate_id(self, tax_rate):
+        """Query bloxs the ID of the payment method"""
+        response = self.session.post(
+            urljoin(
+                self.API_BASE,
+                'data/reference/TaxRatePurchaseInvoiceReferenceItem'),
+            data={
+                "searchTerm": tax_rate,
+                "maxItems": "7"
+                })
+        response.raise_for_status()
+        results = response.json()
+        for result in results:
+            if result['Name'] == tax_rate:
+                return result['ID']
+
+    def find_owner_account_id(self, owner_id):
         """Query bloxs for the owner's bank accounts ID"""
         response = self.session.post(
             urljoin(
                 self.API_BASE,
                 'data/reference/OwnerBankAccountReferenceItem'),
-            data={
+            json={
                 'filters[0][column]': 'OwnerID',
                 'filters[0][operator]': 'eq',
                 'filters[0][value]': str(owner_id),
                 'maxItems': '1'})
         response.raise_for_status()
         results = response.json()
-        return results[0]['Name']
+        return results[0]['ID']
 
     def create_draft_purchase_invoice(self, attachment):
         """create a purchase invoice"""
@@ -113,7 +190,7 @@ class Bloxs():
         time_now = datetime.now().replace(microsecond=0)
         iso_timestamp = time_now.isoformat()
         period_id = self.find_period_id(time_now)
-        payment_term_zero_id = self.find_payment_term_zero_id()
+        payment_term_zero_id = self.find_payment_term_id(0)
         owner_id = self.find_owner_id('Fictief')
         bank_account_id = self.find_owner_accounts_id(owner_id)
 
@@ -136,12 +213,95 @@ class Bloxs():
             data=invoice_data)
         response.raise_for_status()
 
+    def validate_owner_purchase_invoice(self, owner, property, period_time, amount):
+        """
+        create a purchase invoice for an owner of a huur-door-te-verhuur
+        property
+        """
+
+        # invoice time will always be the 1st of the month exactly
+        invoice_time = period_time.replace(
+            day=1, hour=0, minute=0, second=0,
+            microsecond=0, tzinfo=None)
+        iso_timestamp = invoice_time.isoformat()
+
+        owner_id = self.find_owner_id('Amstel Vastgoed Beheer')
+        bank_account_id = self.find_owner_account_id(owner_id)
+        party_id = self.find_party_id(owner)
+        payment_method_transfer = self.find_payment_method_id('Overschrijving')
+        payment_term_zero_id = self.find_payment_term_id(0)
+        period_id = self.find_period_id(invoice_time)
+        invoice_number = "EIGBTL-{}.{}.{}".format(
+            party_id, invoice_time.year, invoice_time.month)
+        subject = "Eigenaar saldo voor periode {}-{}".format(
+            invoice_time.year, invoice_time.month)
+
+        item_amount = amount
+        item_description = "Huur saldo - {}-{}".format(
+            invoice_time.year, invoice_time.month)
+        item_ledger_id = self.find_ledger_id("8000")
+        property_id = self.find_property_id(owner_id, property)
+        tax_rate_none_id = self.find_tax_rate_id("Geen")
+
+        invoice_data = {
+            'OwnerID': owner_id,
+            'BankAccountID': bank_account_id,
+            'Date': iso_timestamp,
+            'IsTransitoric': False,
+            'PartyID': party_id,
+            'PaymentDate': iso_timestamp,
+            'PaymentMethod': str(payment_method_transfer),
+            'PaymentTermID': payment_term_zero_id,
+            'PeriodID': period_id,
+            'ReferenceCode': invoice_number,
+            'Subject': subject,
+            'Lines': [
+                {
+                    'Amount': item_amount,
+                    'Description': item_description,
+                    'LedgerID': item_ledger_id,
+                    'RentableID': property_id,
+                    'TaxRateID': tax_rate_none_id,
+                    'VAT': 0
+                }
+            ]
+        }
+
+        # validate
+        response = self.session.post(
+            urljoin(self.API_BASE, 'ConceptInvoice/ValidateCreateUpgrade'),
+            json=invoice_data)
+        response.raise_for_status()
+
+        # create
+        print(invoice_data)
+        response = self.session.post(
+            urljoin(self.API_BASE, 'ConceptInvoice/Create'),
+            json=invoice_data)
+        response.raise_for_status()
+        results = response.json()
+        invoice_concept_id = results['data']['ID']
+        print(results)
+
+        # "upgrade"
+        response = self.session.post(
+            urljoin(self.API_BASE, 'ConceptInvoice/Upgrade/{}'.format(invoice_concept_id)),
+            data="")
+        response.raise_for_status()
+        results = response.json()
+        invoice_id = results['data']
+        return invoice_id
 
 def main():
     bloxs = Bloxs()
-    # debug_on()
-    bloxs.create_draft_purchase_invoice(
-        '/home/tech/Documents/GrayHatPython_Cruz3N_Ganteng_Banget.pdf')
+    #bloxs.debug_on()
+    #bloxs.create_draft_purchase_invoice(
+    #    '/home/tech/Documents/GrayHatPython_Cruz3N_Ganteng_Banget.pdf')
+    print(bloxs.validate_owner_purchase_invoice(
+        'Mrs. Malka Yulazri',
+        'Dijkgraafplein',
+        datetime(2019, 9, 1),
+        3000))
 
 if __name__ == '__main__':
     main()
