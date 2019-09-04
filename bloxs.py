@@ -6,8 +6,13 @@ from datetime import datetime
 from requests import HTTPError
 from requests_html import HTMLSession
 from requests.compat import urljoin
+from requests.exceptions import HTTPError
 
 import config
+
+
+class InvoiceCreateError(Exception):
+    pass
 
 
 class Bloxs():
@@ -33,7 +38,7 @@ class Bloxs():
         """ Login to Bloxs """
         response = self.session.post(
             urljoin(self.API_BASE, 'Login/PerformLogin'),
-            data={"Username": user, "Password": passwd})
+            json={"Username": user, "Password": passwd})
         response.raise_for_status()
         return True
 
@@ -41,7 +46,7 @@ class Bloxs():
         """upload a file into bloxs, returning the resulting file ID"""
         response = self.session.post(
             urljoin(self.API_BASE, 'File/UpdateFile'),
-            data={"fileId": 'null', "path": "$$Upload"},
+            json={"fileId": 'null', "path": "$$Upload"},
             files={'file': (
                 os.path.split(attachment)[1],
                 open(attachment, 'rb'),
@@ -58,7 +63,7 @@ class Bloxs():
                 'data/reference/PeriodInvoiceReferenceItem'),
             # looking for 4 items to cover the case of
             # 1 matching 10, 11, 12
-            data={"searchTerm": period, "maxItems": "4"})
+            json={"searchTerm": period, "maxItems": "4"})
         response.raise_for_status()
         results = response.json()
         for result in results:
@@ -71,7 +76,7 @@ class Bloxs():
             urljoin(
                 self.API_BASE,
                 'data/reference/PaymentTermWithOtherReferenceItem'),
-            data={"sort": "Days", "maxItems": "99"})
+            json={"sort": "Days", "maxItems": "99"})
         response.raise_for_status()
         results = response.json()
         for result in results:
@@ -84,7 +89,7 @@ class Bloxs():
             urljoin(
                 self.API_BASE,
                 'data/reference/OwnerReferenceItem'),
-            data={"searchTerm": owner, "maxItems": "10"})
+            json={"searchTerm": owner, "maxItems": "10"})
         response.raise_for_status()
         results = response.json()
         for result in results:
@@ -97,7 +102,7 @@ class Bloxs():
             urljoin(
                 self.API_BASE,
                 'data/reference/PartyReferenceItem'),
-            data={"searchTerm": party, "maxItems": "10"})
+            json={"searchTerm": party, "maxItems": "10"})
         response.raise_for_status()
         results = response.json()
         for result in results:
@@ -110,7 +115,7 @@ class Bloxs():
             urljoin(
                 self.API_BASE,
                 'data/reference/PaymentMethodPurchaseInvoiceReferenceItem'),
-            data={"maxItems": "999"})
+            json={"maxItems": "999"})
         response.raise_for_status()
         results = response.json()
         for result in results:
@@ -123,7 +128,7 @@ class Bloxs():
             urljoin(
                 self.API_BASE,
                 'data/reference/LedgerJournalReferenceItem'),
-            data={"searchTerm": ledger_code, "maxItems": "7"})
+            json={"searchTerm": ledger_code, "maxItems": "7"})
         response.raise_for_status()
         results = response.json()
         for result in results:
@@ -159,7 +164,7 @@ class Bloxs():
             urljoin(
                 self.API_BASE,
                 'data/reference/TaxRatePurchaseInvoiceReferenceItem'),
-            data={
+            json={
                 "searchTerm": tax_rate,
                 "maxItems": "7"
                 })
@@ -210,10 +215,11 @@ class Bloxs():
 
         response = self.session.post(
             urljoin(self.API_BASE, 'ConceptInvoice/Create'),
-            data=invoice_data)
+            json=invoice_data)
         response.raise_for_status()
 
-    def validate_owner_purchase_invoice(self, owner, property, period_time, amount):
+    def create_owner_purchase_invoice(self, owner, address, period_time,
+                                      amount):
         """
         create a purchase invoice for an owner of a huur-door-te-verhuur
         property
@@ -225,83 +231,90 @@ class Bloxs():
             microsecond=0, tzinfo=None)
         iso_timestamp = invoice_time.isoformat()
 
-        owner_id = self.find_owner_id('Amstel Vastgoed Beheer')
-        bank_account_id = self.find_owner_account_id(owner_id)
-        party_id = self.find_party_id(owner)
-        payment_method_transfer = self.find_payment_method_id('Overschrijving')
-        payment_term_zero_id = self.find_payment_term_id(0)
-        period_id = self.find_period_id(invoice_time)
-        invoice_number = "EIGBTL-{}.{}.{}".format(
-            party_id, invoice_time.year, invoice_time.month)
-        subject = "Eigenaar saldo voor periode {}-{}".format(
-            invoice_time.year, invoice_time.month)
+        try:
+            owner_id = self.find_owner_id('Amstel Vastgoed Beheer')
+            bank_account_id = self.find_owner_account_id(owner_id)
+            party_id = self.find_party_id(owner)
+            payment_method_transfer = self.find_payment_method_id(
+                                                        'Overschrijving')
+            payment_term_zero_id = self.find_payment_term_id(0)
+            period_id = self.find_period_id(invoice_time)
+            subject = "Eigenaar saldo voor periode {}-{}".format(
+                invoice_time.month, invoice_time.year)
 
-        item_amount = amount
-        item_description = "Huur saldo - {}-{}".format(
-            invoice_time.year, invoice_time.month)
-        item_ledger_id = self.find_ledger_id("8000")
-        property_id = self.find_property_id(owner_id, property)
-        tax_rate_none_id = self.find_tax_rate_id("Geen")
+            item_amount = amount
+            item_description = "Huur saldo - {}-{}".format(
+                invoice_time.month, invoice_time.year)
+            item_ledger_id = self.find_ledger_id("8000")
+            property_id = self.find_property_id(owner_id, address)
+            print(address, property_id)
+            tax_rate_none_id = self.find_tax_rate_id("Geen")
 
-        invoice_data = {
-            'OwnerID': owner_id,
-            'BankAccountID': bank_account_id,
-            'Date': iso_timestamp,
-            'IsTransitoric': False,
-            'PartyID': party_id,
-            'PaymentDate': iso_timestamp,
-            'PaymentMethod': str(payment_method_transfer),
-            'PaymentTermID': payment_term_zero_id,
-            'PeriodID': period_id,
-            'ReferenceCode': invoice_number,
-            'Subject': subject,
-            'Lines': [
-                {
-                    'Amount': item_amount,
-                    'Description': item_description,
-                    'LedgerID': item_ledger_id,
-                    'RentableID': property_id,
-                    'TaxRateID': tax_rate_none_id,
-                    'VAT': 0
-                }
-            ]
-        }
+            invoice_number = "EIGBTL-{}.{}-{}.{}".format(
+                party_id, invoice_time.month, invoice_time.year, property_id)
 
-        # validate
-        response = self.session.post(
-            urljoin(self.API_BASE, 'ConceptInvoice/ValidateCreateUpgrade'),
-            json=invoice_data)
-        response.raise_for_status()
+            invoice_data = {
+                'OwnerID': owner_id,
+                'BankAccountID': bank_account_id,
+                'Date': iso_timestamp,
+                'IsTransitoric': False,
+                'PartyID': party_id,
+                'PaymentDate': iso_timestamp,
+                'PaymentMethod': str(payment_method_transfer),
+                'PaymentTermID': payment_term_zero_id,
+                'PeriodID': period_id,
+                'ReferenceCode': invoice_number,
+                'Subject': subject,
+                'Lines': [
+                    {
+                        'Amount': item_amount,
+                        'Description': item_description,
+                        'LedgerID': item_ledger_id,
+                        'RentableID': property_id,
+                        'TaxRateID': tax_rate_none_id,
+                        'VAT': 0
+                    }
+                ]
+            }
 
-        # create
-        print(invoice_data)
-        response = self.session.post(
-            urljoin(self.API_BASE, 'ConceptInvoice/Create'),
-            json=invoice_data)
-        response.raise_for_status()
-        results = response.json()
-        invoice_concept_id = results['data']['ID']
-        print(results)
+            # validate
+            response = self.session.post(
+                urljoin(self.API_BASE, 'ConceptInvoice/ValidateCreateUpgrade'),
+                json=invoice_data)
+            response.raise_for_status()
 
-        # "upgrade"
-        response = self.session.post(
-            urljoin(self.API_BASE, 'ConceptInvoice/Upgrade/{}'.format(invoice_concept_id)),
-            data="")
-        response.raise_for_status()
-        results = response.json()
-        invoice_id = results['data']
-        return invoice_id
+            # create
+            response = self.session.post(
+                urljoin(self.API_BASE, 'ConceptInvoice/Create'),
+                json=invoice_data)
+            response.raise_for_status()
+            results = response.json()
+            invoice_concept_id = results['data']['ID']
+
+            # "upgrade"
+            response = self.session.post(
+                urljoin(
+                    self.API_BASE,
+                    'ConceptInvoice/Upgrade/{}'.format(invoice_concept_id)),
+                data="")
+            response.raise_for_status()
+            results = response.json()
+            invoice_id = results['data']
+            return invoice_id
+        except HTTPError:
+            raise InvoiceCreateError
+
 
 def main():
     bloxs = Bloxs()
-    #bloxs.debug_on()
-    #bloxs.create_draft_purchase_invoice(
+    # bloxs.debug_on()
+    # bloxs.create_draft_purchase_invoice(
     #    '/home/tech/Documents/GrayHatPython_Cruz3N_Ganteng_Banget.pdf')
-    print(bloxs.validate_owner_purchase_invoice(
+    print(bloxs.create_owner_purchase_invoice(
         'Mrs. Malka Yulazri',
         'Dijkgraafplein',
         datetime(2019, 9, 1),
-        3000))
+        -3000))
 
 if __name__ == '__main__':
     main()
