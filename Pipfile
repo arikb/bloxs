@@ -4,11 +4,14 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 
 [dev-packages]
+rope = "*"
 
 [packages]
 python-dotenv = "*"
 requests-html = "*"
 pep8 = "*"
+click = "*"
+pyexcel-odsr = "*"
 
 [requires]
 python_version = "3.6"
